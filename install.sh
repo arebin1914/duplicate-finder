@@ -62,32 +62,72 @@ case ":${PATH}:" in
        echo "    export PATH=\"\$PATH:$INSTALL_DIR\"" ;;
 esac
 
-# Fish alias
-if command -v fish &>/dev/null; then
-    FISH_CONFIG="${HOME}/.config/fish/config.fish"
-    mkdir -p "$(dirname "$FISH_CONFIG")"
+shell_setup() {
+    local rc="$1"
+    local path_line="export PATH=\"\$PATH:$INSTALL_DIR\""
+    local alias_line="alias $ALIAS_NAME='$BINARY_NAME'"
 
-    # Ensure INSTALL_DIR is in fish PATH
-    if ! grep -q "fish_add_path.*$INSTALL_DIR" "$FISH_CONFIG" 2>/dev/null; then
-        echo >> "$FISH_CONFIG"
-        echo "# $INSTALL_DIR" >> "$FISH_CONFIG"
-        echo "fish_add_path -g \"$INSTALL_DIR\"" >> "$FISH_CONFIG"
-        echo "Added $INSTALL_DIR to fish PATH in $FISH_CONFIG"
+    mkdir -p "$(dirname "$rc")"
+
+    if ! grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+        echo >> "$rc"
+        echo "# dupfind" >> "$rc"
+        echo "$path_line" >> "$rc"
     fi
 
-    if ! grep -q "function $ALIAS_NAME" "$FISH_CONFIG" 2>/dev/null; then
-        cat >> "$FISH_CONFIG" <<- EOF
+    if grep -qE "(alias $ALIAS_NAME=|function $ALIAS_NAME)" "$rc" 2>/dev/null; then
+        echo "Alias '$ALIAS_NAME' already configured in $rc"
+    else
+        echo "$alias_line" >> "$rc"
+        echo "Added '$ALIAS_NAME' alias to $rc"
+    fi
+}
+
+setup_fish() {
+    local rc="${HOME}/.config/fish/config.fish"
+    mkdir -p "$(dirname "$rc")"
+
+    if ! grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+        echo >> "$rc"
+        echo "# $INSTALL_DIR" >> "$rc"
+        echo "fish_add_path -g \"$INSTALL_DIR\"" >> "$rc"
+    fi
+
+    if grep -q "function $ALIAS_NAME" "$rc" 2>/dev/null; then
+        echo "Alias '$ALIAS_NAME' already configured in $rc"
+    else
+        cat >> "$rc" <<- EOF
 
 # dupfind alias
 function $ALIAS_NAME --wraps $BINARY_NAME
     $BINARY_NAME \$argv
 end
 EOF
-        echo "Added fish alias '$ALIAS_NAME' to $FISH_CONFIG"
-    else
-        echo "Fish alias '$ALIAS_NAME' already configured"
+        echo "Added '$ALIAS_NAME' alias to $rc"
     fi
-fi
+}
+
+# Detect current shell
+CURRENT_SHELL=$(basename "${SHELL:-}" 2>/dev/null || echo "")
+
+case "$CURRENT_SHELL" in
+    bash) shell_setup "${HOME}/.bashrc" ;;
+    zsh)  shell_setup "${HOME}/.zshrc" ;;
+    fish) setup_fish ;;
+esac
+
+# Also set up other shells present on the system
+for shell in bash zsh fish; do
+    [ "$shell" = "$CURRENT_SHELL" ] && continue
+    case "$shell" in
+        bash) [ -f "${HOME}/.bashrc" ] && shell_setup "${HOME}/.bashrc" ;;
+        zsh)  [ -f "${HOME}/.zshrc" ] && shell_setup "${HOME}/.zshrc" ;;
+        fish) [ -f "${HOME}/.config/fish/config.fish" ] && setup_fish ;;
+    esac
+done
+
+# Always add to .profile for POSIX sh compatibility
+shell_setup "${HOME}/.profile"
 
 echo
-echo "Done! Run '$ALIAS_NAME' or '$BINARY_NAME' to start."
+echo "Done! Restart your shell or run 'source ~/.profile' then run '$ALIAS_NAME' or '$BINARY_NAME'."
