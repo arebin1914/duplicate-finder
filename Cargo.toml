@@ -1,9 +1,10 @@
 [package]
 name = "dupfind"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
 blake3 = "1"
 jwalk = "0.8"
 rayon = "1"
+ureq = "3"

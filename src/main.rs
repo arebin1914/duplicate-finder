@@ -154,7 +154,50 @@ fn prompt_min_size() -> u64 {
     }
 }
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+const VERSION: &str = env!("BUILD_GIT_VERSION");
+
+fn check_update() {
+    let url = "https://api.github.com/repos/arebin1914/duplicate-finder/tags?per_page=1";
+    let agent = ureq::Agent::new_with_defaults();
+    let resp = match agent.get(url)
+        .header("User-Agent", "dupfind")
+        .header("Accept", "application/json")
+        .call()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Update check failed: {}", e);
+            return;
+        }
+    };
+    let body = match resp.into_body().read_to_string() {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("Could not read update response.");
+            return;
+        }
+    };
+    let latest_tag = match body.split("\"name\":\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+    {
+        Some(t) => t.to_string(),
+        None => {
+            eprintln!("No releases found on GitHub.");
+            return;
+        }
+    };
+
+    let local = VERSION.trim_start_matches('v');
+    let remote = latest_tag.trim_start_matches('v');
+
+    if local == remote || local.starts_with(remote) {
+        println!("dupfind {} is up to date.", VERSION);
+    } else {
+        println!("Update available: {} → {} (latest)", local, latest_tag);
+        println!("Reinstall: curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash");
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -169,6 +212,10 @@ fn main() {
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("dupfind {}", VERSION);
+        return;
+    }
+    if args.iter().any(|a| a == "--check-update") {
+        check_update();
         return;
     }
 
@@ -203,6 +250,7 @@ fn main() {
                 println!("  --json                Output as JSON");
                 println!("  --no-size             Hide file sizes");
                 println!("  --follow-symlinks     Follow symbolic links");
+                println!("  --check-update       Check for newer version on GitHub");
                 println!("  -V, --version         Show version");
                 println!("  -h, --help            Show this help");
                 return;
