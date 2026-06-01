@@ -15,10 +15,16 @@ else
 fi
 
 if ! command -v cargo &>/dev/null; then
-    echo "Error: Rust/Cargo is not installed."
-    echo "Install it first:"
-    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    exit 1
+    echo "Rust/Cargo is not installed."
+    printf "Install Rust via rustup? [Y/n] "
+    read -r answer
+    case "${answer:-y}" in
+        y|Y|yes|YES|"") ;;
+        *) echo "Aborted."; exit 1 ;;
+    esac
+    echo "Installing Rust..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    . "$HOME/.cargo/env"
 fi
 
 BUILD_DIR=$(mktemp -d)
