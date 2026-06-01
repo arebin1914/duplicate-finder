@@ -192,7 +192,7 @@ fn check_update() -> Option<String> {
     let local = VERSION.trim_start_matches('v');
     let remote = latest_tag.trim_start_matches('v');
 
-    if local == remote || local.starts_with(remote) {
+    if local == remote {
         None
     } else {
         Some(latest_tag)
