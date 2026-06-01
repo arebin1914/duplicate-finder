@@ -7,13 +7,17 @@ INSTALL_DIR="${HOME}/.local/bin"
 REPO="arebin1914/duplicate-finder"
 BRANCH="master"
 
-# Detect if running from within the repo (local install) or via curl
+UPDATE=false
+[ "${1:-}" = "--update" ] && UPDATE=true
+
+# Detect if running from within the repo
 if [ -f Cargo.toml ] && grep -q 'name = "dupfind"' Cargo.toml 2>/dev/null; then
     LOCAL=true
 else
     LOCAL=false
 fi
 
+# ── Rust check ──────────────────────────────────────────────────
 if ! command -v cargo &>/dev/null; then
     echo "Rust/Cargo is not installed."
     printf "Install Rust via rustup? [Y/n] "
@@ -31,6 +35,21 @@ if ! command -v cargo &>/dev/null; then
     . "$HOME/.cargo/env"
 fi
 
+# ── Version check ───────────────────────────────────────────────
+CURRENT_VER=""
+BINARY_PATH="${INSTALL_DIR}/${BINARY_NAME}"
+if [ -x "$BINARY_PATH" ]; then
+    CURRENT_VER=$("$BINARY_PATH" --version 2>/dev/null | awk '{print $2}' || true)
+fi
+
+if [ "$UPDATE" = true ] || [ -n "$CURRENT_VER" ]; then
+    ACTION="update"
+    [ -z "$CURRENT_VER" ] && ACTION="install"
+else
+    ACTION="install"
+fi
+
+# ── Build ───────────────────────────────────────────────────────
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -49,18 +68,31 @@ fi
 cd "$BUILD_DIR"
 cargo build --release
 
+# ── Get new version ─────────────────────────────────────────────
+NEW_VER=$(./target/release/"$BINARY_NAME" --version 2>/dev/null | awk '{print $2}' || echo "?")
+
+# ── Install ─────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR"
 cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-echo "Installed to: $INSTALL_DIR/$BINARY_NAME"
+if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NEW_VER" ]; then
+    echo "Updated: $CURRENT_VER → $NEW_VER"
+elif [ -n "$CURRENT_VER" ]; then
+    echo "Already up to date ($NEW_VER)"
+else
+    echo "Installed $BINARY_NAME $NEW_VER to $INSTALL_DIR/$BINARY_NAME"
+fi
 
-# Add to PATH if not already present
+# ── PATH warning ────────────────────────────────────────────────
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
     *) echo "Warning: $INSTALL_DIR is not in PATH. Add this to your shell config:"
        echo "    export PATH=\"\$PATH:$INSTALL_DIR\"" ;;
 esac
+
+# ── Shell setup (skip on update) ────────────────────────────────
+if [ "$ACTION" = "install" ]; then
 
 shell_setup() {
     local rc="$1"
@@ -76,7 +108,7 @@ shell_setup() {
     fi
 
     if grep -qE "(alias $ALIAS_NAME=|function $ALIAS_NAME)" "$rc" 2>/dev/null; then
-        echo "Alias '$ALIAS_NAME' already configured in $rc"
+        : # already configured
     else
         echo "$alias_line" >> "$rc"
         echo "Added '$ALIAS_NAME' alias to $rc"
@@ -94,7 +126,7 @@ setup_fish() {
     fi
 
     if grep -q "function $ALIAS_NAME" "$rc" 2>/dev/null; then
-        echo "Alias '$ALIAS_NAME' already configured in $rc"
+        : # already configured
     else
         cat >> "$rc" <<- EOF
 
@@ -107,16 +139,13 @@ EOF
     fi
 }
 
-# Detect current shell
 CURRENT_SHELL=$(basename "${SHELL:-}" 2>/dev/null || echo "")
-
 case "$CURRENT_SHELL" in
     bash) shell_setup "${HOME}/.bashrc" ;;
     zsh)  shell_setup "${HOME}/.zshrc" ;;
     fish) setup_fish ;;
 esac
 
-# Also set up other shells present on the system
 for shell in bash zsh fish; do
     [ "$shell" = "$CURRENT_SHELL" ] && continue
     case "$shell" in
@@ -126,8 +155,9 @@ for shell in bash zsh fish; do
     esac
 done
 
-# Always add to .profile for POSIX sh compatibility
 shell_setup "${HOME}/.profile"
 
+fi # end shell setup
+
 echo
-echo "Done! Restart your shell or run 'source ~/.profile' then run '$ALIAS_NAME' or '$BINARY_NAME'."
+echo "Done! Run '$ALIAS_NAME' or '$BINARY_NAME' to start."

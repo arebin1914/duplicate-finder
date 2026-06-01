@@ -154,6 +154,8 @@ fn prompt_min_size() -> u64 {
     }
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut root = ".".to_string();
@@ -164,6 +166,11 @@ fn main() {
     let mut no_size = false;
     let mut follow_links = false;
     let mut interactive = false;
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("dupfind {}", VERSION);
+        return;
+    }
 
     let mut i = 1;
     while i < args.len() {
@@ -196,6 +203,7 @@ fn main() {
                 println!("  --json                Output as JSON");
                 println!("  --no-size             Hide file sizes");
                 println!("  --follow-symlinks     Follow symbolic links");
+                println!("  -V, --version         Show version");
                 println!("  -h, --help            Show this help");
                 return;
             }
