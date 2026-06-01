@@ -70,8 +70,30 @@ if [ "$LOCAL" = true ]; then
     cp -r . "$BUILD_DIR/"
 else
     if ! command -v git &>/dev/null; then
-        echo "Error: git is required for curl-based installation."
-        exit 1
+        echo "git is not installed."
+        printf "Install git? [Y/n] "
+        if [ -t 0 ]; then
+            read -r answer
+        else
+            read -r answer < /dev/tty 2>/dev/null || answer="y"
+        fi
+        case "${answer:-y}" in
+            y|Y|yes|YES|"") ;;
+            *) echo "Aborted."; exit 1 ;;
+        esac
+        echo "Installing git..."
+        if command -v apt &>/dev/null; then
+            apt update && apt install -y git
+        elif command -v pacman &>/dev/null; then
+            pacman -Sy --noconfirm git
+        elif command -v dnf &>/dev/null; then
+            dnf install -y git
+        elif command -v apk &>/dev/null; then
+            apk add git
+        else
+            echo "Error: can't determine package manager. Install git manually."
+            exit 1
+        fi
     fi
     echo "Downloading $BINARY_NAME from $REPO..."
     git clone --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$BUILD_DIR"
