@@ -17,7 +17,11 @@ fi
 if ! command -v cargo &>/dev/null; then
     echo "Rust/Cargo is not installed."
     printf "Install Rust via rustup? [Y/n] "
-    read -r answer
+    if [ -t 0 ]; then
+        read -r answer
+    else
+        read -r answer < /dev/tty 2>/dev/null || answer="y"
+    fi
     case "${answer:-y}" in
         y|Y|yes|YES|"") ;;
         *) echo "Aborted."; exit 1 ;;
