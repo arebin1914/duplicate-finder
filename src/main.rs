@@ -47,7 +47,7 @@ fn scan_files(
     follow_links: bool,
     scanned: &AtomicU64,
 ) -> BTreeMap<u64, Vec<PathBuf>> {
-    let entries: Vec<_> = WalkDir::new(root)
+    let files: Vec<(u64, PathBuf)> = WalkDir::new(root)
         .follow_links(follow_links)
         .skip_hidden(false)
         .into_iter()
@@ -65,38 +65,33 @@ fn scan_files(
                         return false;
                     }
                 } else {
-                    return false; // no extension, skip
+                    return false;
                 }
             }
             true
         })
-        .collect();
-
-    let size_map: BTreeMap<u64, Vec<PathBuf>> = entries
-        .par_iter()
         .filter_map(|entry| {
-            let meta = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => return None,
-            };
+            let meta = entry.metadata().ok()?;
             if meta.len() < min_size {
                 return None;
             }
             scanned.fetch_add(1, Ordering::Relaxed);
-            Some((meta.len(), entry.path()))
+            Some((meta.len(), entry.path().to_path_buf()))
         })
+        .collect();
+
+    files
+        .par_iter()
         .fold(BTreeMap::<u64, Vec<PathBuf>>::new, |mut acc, (size, path)| {
-            acc.entry(size).or_default().push(path);
+            acc.entry(*size).or_default().push(path.clone());
             acc
         })
-        .reduce(BTreeMap::<u64, Vec<PathBuf>>::new, |mut a, b| {
+        .reduce(BTreeMap::new, |mut a, b| {
             for (k, v) in b {
                 a.entry(k).or_default().extend(v);
             }
             a
-        });
-
-    size_map
+        })
 }
 
 fn spinner_frame(phase: &str, count: u64, elapsed: f64) -> String {
