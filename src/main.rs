@@ -156,46 +156,36 @@ fn prompt_min_size() -> u64 {
 
 const VERSION: &str = env!("BUILD_GIT_VERSION");
 
-fn check_update() {
+fn check_update() -> Option<String> {
     let url = "https://api.github.com/repos/arebin1914/duplicate-finder/tags?per_page=1";
     let agent = ureq::Agent::new_with_defaults();
-    let resp = match agent.get(url)
+    let resp = agent.get(url)
         .header("User-Agent", "dupfind")
         .header("Accept", "application/json")
-        .call()
-    {
+        .call();
+    let resp = match resp {
         Ok(r) => r,
-        Err(e) => {
-            eprintln!("Update check failed: {}", e);
-            return;
-        }
+        Err(_) => return None,
     };
     let body = match resp.into_body().read_to_string() {
         Ok(b) => b,
-        Err(_) => {
-            eprintln!("Could not read update response.");
-            return;
-        }
+        Err(_) => return None,
     };
     let latest_tag = match body.split("\"name\":\"")
         .nth(1)
         .and_then(|s| s.split('"').next())
     {
         Some(t) => t.to_string(),
-        None => {
-            eprintln!("No releases found on GitHub.");
-            return;
-        }
+        None => return None,
     };
 
     let local = VERSION.trim_start_matches('v');
     let remote = latest_tag.trim_start_matches('v');
 
     if local == remote || local.starts_with(remote) {
-        println!("dupfind {} is up to date.", VERSION);
+        None
     } else {
-        println!("Update available: {} → {} (latest)", local, latest_tag);
-        println!("Reinstall: curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash");
+        Some(latest_tag)
     }
 }
 
@@ -215,8 +205,26 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--check-update") {
-        check_update();
+        match check_update() {
+            Some(tag) => println!("Update available: {} → {}", VERSION, tag),
+            None => println!("dupfind {} is up to date.", VERSION),
+        }
         return;
+    }
+
+    // Auto-check for update (skip with --no-check-update or --json)
+    if !args.iter().any(|a| a == "--no-check-update") && !args.iter().any(|a| a == "--json") {
+        if let Some(tag) = check_update() {
+            eprint!("Update {} available. Install now? [Y/n] ", tag);
+            io::stderr().flush().ok();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).ok();
+            let answer = input.trim().to_lowercase();
+            if answer.is_empty() || answer == "y" || answer == "yes" {
+                println!("Run: curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash");
+                return;
+            }
+        }
     }
 
     let mut i = 1;
@@ -251,6 +259,7 @@ fn main() {
                 println!("  --no-size             Hide file sizes");
                 println!("  --follow-symlinks     Follow symbolic links");
                 println!("  --check-update       Check for newer version on GitHub");
+                println!("  --no-check-update    Skip automatic update check");
                 println!("  -V, --version         Show version");
                 println!("  -h, --help            Show this help");
                 return;
