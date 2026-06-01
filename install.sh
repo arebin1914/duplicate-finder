@@ -7,8 +7,8 @@ INSTALL_DIR="${HOME}/.local/bin"
 REPO="arebin1914/duplicate-finder"
 BRANCH="master"
 
-UPDATE=false
-[ "${1:-}" = "--update" ] && UPDATE=true
+FORCE=false
+[ "${1:-}" = "--force" ] && FORCE=true
 
 # Detect if running from within the repo
 if [ -f Cargo.toml ] && grep -q 'name = "dupfind"' Cargo.toml 2>/dev/null; then
@@ -35,18 +35,30 @@ if ! command -v cargo &>/dev/null; then
     . "$HOME/.cargo/env"
 fi
 
-# ── Version check ───────────────────────────────────────────────
-CURRENT_VER=""
-BINARY_PATH="${INSTALL_DIR}/${BINARY_NAME}"
-if [ -x "$BINARY_PATH" ]; then
-    CURRENT_VER=$("$BINARY_PATH" --version 2>/dev/null | awk '{print $2}' || true)
+# ── Find existing binary ────────────────────────────────────────
+OLD_VER=""
+OLD_PATH=""
+
+for loc in "$INSTALL_DIR/$BINARY_NAME" "${HOME}/.cargo/bin/$BINARY_NAME"; do
+    if [ -x "$loc" ]; then
+        OLD_PATH="$loc"
+        OLD_VER=$("$loc" --version 2>/dev/null | awk '{print $2}' || true)
+        break
+    fi
+done
+
+# also check PATH as fallback
+if [ -z "$OLD_PATH" ]; then
+    FOUND=$(command -v "$BINARY_NAME" 2>/dev/null || true)
+    if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
+        OLD_PATH="$FOUND"
+        OLD_VER=$("$FOUND" --version 2>/dev/null | awk '{print $2}' || true)
+    fi
 fi
 
-if [ "$UPDATE" = true ] || [ -n "$CURRENT_VER" ]; then
-    ACTION="update"
-    [ -z "$CURRENT_VER" ] && ACTION="install"
-else
-    ACTION="install"
+NEW_INSTALL=false
+if [ -z "$OLD_PATH" ]; then
+    NEW_INSTALL=true
 fi
 
 # ── Build ───────────────────────────────────────────────────────
@@ -72,16 +84,25 @@ cargo build --release
 NEW_VER=$(./target/release/"$BINARY_NAME" --version 2>/dev/null | awk '{print $2}' || echo "?")
 
 # ── Install ─────────────────────────────────────────────────────
-mkdir -p "$INSTALL_DIR"
-cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-chmod +x "$INSTALL_DIR/$BINARY_NAME"
-
-if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NEW_VER" ]; then
-    echo "Updated: $CURRENT_VER → $NEW_VER"
-elif [ -n "$CURRENT_VER" ]; then
-    echo "Already up to date ($NEW_VER)"
-else
+if [ "$NEW_INSTALL" = true ]; then
+    mkdir -p "$INSTALL_DIR"
+    cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
     echo "Installed $BINARY_NAME $NEW_VER to $INSTALL_DIR/$BINARY_NAME"
+else
+    # Same location, or use INSTALL_DIR if old path isn't writable
+    DEST="$OLD_PATH"
+    if [ ! -w "$(dirname "$DEST")" ]; then
+        DEST="$INSTALL_DIR/$BINARY_NAME"
+        mkdir -p "$INSTALL_DIR"
+    fi
+    cp "target/release/$BINARY_NAME" "$DEST"
+    chmod +x "$DEST"
+    if [ "$OLD_VER" != "$NEW_VER" ]; then
+        echo "Updated: $OLD_VER → $NEW_VER"
+    else
+        echo "Reinstalled $BINARY_NAME $NEW_VER (same version)"
+    fi
 fi
 
 # ── PATH warning ────────────────────────────────────────────────
@@ -91,9 +112,7 @@ case ":${PATH}:" in
        echo "    export PATH=\"\$PATH:$INSTALL_DIR\"" ;;
 esac
 
-# ── Shell setup (skip on update) ────────────────────────────────
-if [ "$ACTION" = "install" ]; then
-
+# ── Shell setup ────────────────────────────────────────────────
 shell_setup() {
     local rc="$1"
     local path_line="export PATH=\"\$PATH:$INSTALL_DIR\""
@@ -101,7 +120,9 @@ shell_setup() {
 
     mkdir -p "$(dirname "$rc")"
 
-    if ! grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+    if grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+        : # already in PATH
+    else
         echo >> "$rc"
         echo "# dupfind" >> "$rc"
         echo "$path_line" >> "$rc"
@@ -119,7 +140,9 @@ setup_fish() {
     local rc="${HOME}/.config/fish/config.fish"
     mkdir -p "$(dirname "$rc")"
 
-    if ! grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+    if grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
+        : # already in PATH
+    else
         echo >> "$rc"
         echo "# $INSTALL_DIR" >> "$rc"
         echo "fish_add_path -g \"$INSTALL_DIR\"" >> "$rc"
@@ -157,7 +180,5 @@ done
 
 shell_setup "${HOME}/.profile"
 
-fi # end shell setup
-
 echo
-echo "Done! Run '$ALIAS_NAME' or '$BINARY_NAME' to start."
+echo "Done! Restart your shell or run: exec \$SHELL"
