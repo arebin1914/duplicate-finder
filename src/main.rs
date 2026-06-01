@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
@@ -42,6 +42,7 @@ fn file_hash(path: &Path) -> io::Result<String> {
 fn scan_files(
     root: &Path,
     exclude: &[PathBuf],
+    exts: &HashSet<String>,
     min_size: u64,
     follow_links: bool,
     scanned: &AtomicU64,
@@ -52,8 +53,22 @@ fn scan_files(
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().is_file()
-                && !exclude.iter().any(|x| e.path() == *x)
+            if !e.file_type().is_file() {
+                return false;
+            }
+            if exclude.iter().any(|x| e.path() == *x) {
+                return false;
+            }
+            if !exts.is_empty() {
+                if let Some(ext) = e.path().extension() {
+                    if !exts.contains(&ext.to_string_lossy().to_lowercase()) {
+                        return false;
+                    }
+                } else {
+                    return false; // no extension, skip
+                }
+            }
+            true
         })
         .collect();
 
@@ -194,6 +209,7 @@ fn main() {
     let mut root = ".".to_string();
     let mut min_size_str: Option<String> = None;
     let mut exclude_dirs: Vec<PathBuf> = Vec::new();
+    let mut ext_set = HashSet::<String>::new();
     let mut delete_mode = false;
     let mut json_mode = false;
     let mut no_size = false;
@@ -244,6 +260,14 @@ fn main() {
                 min_size_str = args.get(i).cloned();
             }
             "-i" | "--interactive" => interactive = true,
+            "-e" | "--ext" => {
+                i += 1;
+                if let Some(val) = args.get(i) {
+                    for ext in val.split(',') {
+                        ext_set.insert(ext.trim().to_lowercase());
+                    }
+                }
+            }
             "-x" | "--exclude" => {
                 i += 1;
                 while i < args.len() && !args[i].starts_with('-') {
@@ -261,6 +285,7 @@ fn main() {
                 println!();
                 println!("Options:");
                 println!("  -i, --interactive     Prompt for minimum file size interactively");
+                println!("  -e, --ext EXT         File extensions to include (comma-sep, e.g. jpg,png)");
                 println!("  -m, --min-size SIZE   Minimum file size (e.g. 1K, 5M, 1G)");
                 println!("  -x, --exclude DIR     Exclude directories (can be repeated)");
                 println!("  --delete              Interactively delete duplicates");
@@ -326,7 +351,7 @@ fn main() {
         None
     };
 
-    let size_map = scan_files(&root_abs, &exclude_abs, min_size, follow_links, &scanned);
+    let size_map = scan_files(&root_abs, &exclude_abs, &ext_set, min_size, follow_links, &scanned);
 
     running.store(false, Ordering::Relaxed);
     if let Some(h) = spinner_handle {
