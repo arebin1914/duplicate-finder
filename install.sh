@@ -155,6 +155,7 @@ NEW_VER=$(./target/release/"$BINARY_NAME" --version 2>/dev/null | awk '{print $2
 
 if [ "$NEW_INSTALL" = true ]; then
     mkdir -p "$INSTALL_DIR"
+    rm -f "$INSTALL_DIR/$BINARY_NAME"
     cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
     info $step $TOTAL "Installed $BINARY_NAME $NEW_VER to $INSTALL_DIR/$BINARY_NAME"
@@ -164,6 +165,7 @@ else
         DEST="$INSTALL_DIR/$BINARY_NAME"
         mkdir -p "$INSTALL_DIR"
     fi
+    rm -f "$DEST"
     cp "target/release/$BINARY_NAME" "$DEST"
     chmod +x "$DEST"
     if [ "$OLD_VER" != "$NEW_VER" ]; then
