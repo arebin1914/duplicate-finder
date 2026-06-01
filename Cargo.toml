@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 blake3 = "1"
+jwalk = "0.8"
 rayon = "1"

@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use jwalk::WalkDir;
 use rayon::prelude::*;
 
 const CHUNK_SIZE: usize = 256 * 1024;
@@ -38,53 +39,49 @@ fn file_hash(path: &Path) -> io::Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn walk_files(
-    dir: &Path,
+fn scan_files(
+    root: &Path,
     exclude: &[PathBuf],
     min_size: u64,
     follow_links: bool,
-    size_map: &mut BTreeMap<u64, Vec<PathBuf>>,
     scanned: &AtomicU64,
-) -> io::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
+) -> BTreeMap<u64, Vec<PathBuf>> {
+    let entries: Vec<_> = WalkDir::new(root)
+        .follow_links(follow_links)
+        .skip_hidden(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().is_file()
+                && !exclude.iter().any(|x| e.path() == *x)
+        })
+        .collect();
 
-    let mut entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    while let Some(entry) = entries.next() {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let path = entry.path();
-
-        if exclude.iter().any(|e| path == *e) {
-            continue;
-        }
-
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        if file_type.is_dir() {
-            walk_files(&path, exclude, min_size, follow_links, size_map, scanned)?;
-        } else if file_type.is_file() || (follow_links && file_type.is_symlink()) {
-            let meta = match fs::metadata(&path) {
+    let size_map: BTreeMap<u64, Vec<PathBuf>> = entries
+        .par_iter()
+        .filter_map(|entry| {
+            let meta = match entry.metadata() {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(_) => return None,
             };
-            if meta.len() >= min_size {
-                size_map.entry(meta.len()).or_default().push(path);
+            if meta.len() < min_size {
+                return None;
             }
             scanned.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-    Ok(())
+            Some((meta.len(), entry.path()))
+        })
+        .fold(BTreeMap::<u64, Vec<PathBuf>>::new, |mut acc, (size, path)| {
+            acc.entry(size).or_default().push(path);
+            acc
+        })
+        .reduce(BTreeMap::<u64, Vec<PathBuf>>::new, |mut a, b| {
+            for (k, v) in b {
+                a.entry(k).or_default().extend(v);
+            }
+            a
+        });
+
+    size_map
 }
 
 fn spinner_frame(phase: &str, count: u64, elapsed: f64) -> String {
@@ -250,7 +247,6 @@ fn main() {
         .collect();
 
     let start = Instant::now();
-    let mut size_map: BTreeMap<u64, Vec<PathBuf>> = BTreeMap::new();
 
     // Phase 1: Scan
     let scanned = Arc::new(AtomicU64::new(0));
@@ -264,16 +260,7 @@ fn main() {
         None
     };
 
-    if let Err(e) = walk_files(
-        &root_abs, &exclude_abs, min_size, follow_links, &mut size_map, &scanned,
-    ) {
-        running.store(false, Ordering::Relaxed);
-        if let Some(h) = spinner_handle {
-            let _ = h.join();
-        }
-        eprintln!("Error scanning: {}", e);
-        std::process::exit(1);
-    }
+    let size_map = scan_files(&root_abs, &exclude_abs, min_size, follow_links, &scanned);
 
     running.store(false, Ordering::Relaxed);
     if let Some(h) = spinner_handle {
