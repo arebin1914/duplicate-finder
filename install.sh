@@ -7,8 +7,9 @@ INSTALL_DIR="${HOME}/.local/bin"
 REPO="arebin1914/duplicate-finder"
 BRANCH="master"
 
-FORCE=false
-[ "${1:-}" = "--force" ] && FORCE=true
+info() { echo "  [${1}/${2}] ${3}"; }
+
+TOTAL=6
 
 # Detect if running from within the repo
 if [ -f Cargo.toml ] && grep -q 'name = "dupfind"' Cargo.toml 2>/dev/null; then
@@ -17,9 +18,10 @@ else
     LOCAL=false
 fi
 
-# ── Rust check ──────────────────────────────────────────────────
+# ── 1/6: Rust ───────────────────────────────────────────────────
+step=1
 if ! command -v cargo &>/dev/null; then
-    echo "Rust/Cargo is not installed."
+    info $step $TOTAL "Rust is not installed. Prompting user..."
     printf "Install Rust via rustup? [Y/n] "
     if [ -t 0 ]; then
         read -r answer
@@ -30,12 +32,15 @@ if ! command -v cargo &>/dev/null; then
         y|Y|yes|YES|"") ;;
         *) echo "Aborted."; exit 1 ;;
     esac
-    echo "Installing Rust..."
+    echo "       Installing Rust (this may take a minute)..."
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
     . "$HOME/.cargo/env"
+else
+    info $step $TOTAL "Rust is ready"
 fi
 
-# ── Find existing binary ────────────────────────────────────────
+# ── 2/6: Find existing binary ──────────────────────────────────
+step=2
 OLD_VER=""
 OLD_PATH=""
 
@@ -47,7 +52,6 @@ for loc in "$INSTALL_DIR/$BINARY_NAME" "${HOME}/.cargo/bin/$BINARY_NAME"; do
     fi
 done
 
-# also check PATH as fallback
 if [ -z "$OLD_PATH" ]; then
     FOUND=$(command -v "$BINARY_NAME" 2>/dev/null || true)
     if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
@@ -59,18 +63,22 @@ fi
 NEW_INSTALL=false
 if [ -z "$OLD_PATH" ]; then
     NEW_INSTALL=true
+    info $step $TOTAL "No existing $BINARY_NAME found (fresh install)"
+else
+    info $step $TOTAL "Found $BINARY_NAME at $OLD_PATH (v${OLD_VER:-?})"
 fi
 
-# ── Build ───────────────────────────────────────────────────────
+# ── 3/6: Get source ────────────────────────────────────────────
+step=3
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
 if [ "$LOCAL" = true ]; then
-    echo "Building $BINARY_NAME from local source..."
+    info $step $TOTAL "Copying local source..."
     cp -r . "$BUILD_DIR/"
 else
     if ! command -v git &>/dev/null; then
-        echo "git is not installed."
+        info $step $TOTAL "git is not installed. Prompting user..."
         printf "Install git? [Y/n] "
         if [ -t 0 ]; then
             read -r answer
@@ -81,7 +89,7 @@ else
             y|Y|yes|YES|"") ;;
             *) echo "Aborted."; exit 1 ;;
         esac
-        echo "Installing git..."
+        echo "       Installing git..."
         if command -v apt &>/dev/null; then
             apt update && apt install -y git
         elif command -v pacman &>/dev/null; then
@@ -91,28 +99,30 @@ else
         elif command -v apk &>/dev/null; then
             apk add git
         else
-            echo "Error: can't determine package manager. Install git manually."
+            echo "       Error: can't determine package manager. Install git manually."
             exit 1
         fi
     fi
-    echo "Downloading $BINARY_NAME from $REPO..."
+    info $step $TOTAL "Downloading source from $REPO..."
     git clone --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$BUILD_DIR"
 fi
 
+# ── 4/6: Build ─────────────────────────────────────────────────
+step=4
 cd "$BUILD_DIR"
+info $step $TOTAL "Compiling with cargo (first run downloads crates, may take a few min)..."
 cargo build --release
 
-# ── Get new version ─────────────────────────────────────────────
+# ── 5/6: Install binary ───────────────────────────────────────
+step=5
 NEW_VER=$(./target/release/"$BINARY_NAME" --version 2>/dev/null | awk '{print $2}' || echo "?")
 
-# ── Install ─────────────────────────────────────────────────────
 if [ "$NEW_INSTALL" = true ]; then
     mkdir -p "$INSTALL_DIR"
     cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
     chmod +x "$INSTALL_DIR/$BINARY_NAME"
-    echo "Installed $BINARY_NAME $NEW_VER to $INSTALL_DIR/$BINARY_NAME"
+    info $step $TOTAL "Installed $BINARY_NAME $NEW_VER to $INSTALL_DIR/$BINARY_NAME"
 else
-    # Same location, or use INSTALL_DIR if old path isn't writable
     DEST="$OLD_PATH"
     if [ ! -w "$(dirname "$DEST")" ]; then
         DEST="$INSTALL_DIR/$BINARY_NAME"
@@ -121,29 +131,31 @@ else
     cp "target/release/$BINARY_NAME" "$DEST"
     chmod +x "$DEST"
     if [ "$OLD_VER" != "$NEW_VER" ]; then
-        echo "Updated: $OLD_VER → $NEW_VER"
+        info $step $TOTAL "Updated $OLD_VER → $NEW_VER"
     else
-        echo "Reinstalled $BINARY_NAME $NEW_VER (same version)"
+        info $step $TOTAL "Reinstalled $BINARY_NAME $NEW_VER (same version)"
     fi
 fi
 
 # ── PATH warning ────────────────────────────────────────────────
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
-    *) echo "Warning: $INSTALL_DIR is not in PATH. Add this to your shell config:"
-       echo "    export PATH=\"\$PATH:$INSTALL_DIR\"" ;;
+    *) echo "       Warning: $INSTALL_DIR is not in PATH. Add this to your shell config:"
+       echo "           export PATH=\"\$PATH:$INSTALL_DIR\"" ;;
 esac
 
-# ── Shell setup ────────────────────────────────────────────────
+# ── 6/6: Shell setup ──────────────────────────────────────────
+step=6
+info $step $TOTAL "Setting up shell aliases..."
+
 shell_setup() {
     local rc="$1"
     local path_line="export PATH=\"\$PATH:$INSTALL_DIR\""
     local alias_line="alias $ALIAS_NAME='$BINARY_NAME'"
-
     mkdir -p "$(dirname "$rc")"
 
     if grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
-        : # already in PATH
+        :
     else
         echo >> "$rc"
         echo "# dupfind" >> "$rc"
@@ -151,10 +163,10 @@ shell_setup() {
     fi
 
     if grep -qE "(alias $ALIAS_NAME=|function $ALIAS_NAME)" "$rc" 2>/dev/null; then
-        : # already configured
+        :
     else
         echo "$alias_line" >> "$rc"
-        echo "Added '$ALIAS_NAME' alias to $rc"
+        echo "         Added '$ALIAS_NAME' alias to $(basename "$rc")"
     fi
 }
 
@@ -163,7 +175,7 @@ setup_fish() {
     mkdir -p "$(dirname "$rc")"
 
     if grep -q "$INSTALL_DIR" "$rc" 2>/dev/null; then
-        : # already in PATH
+        :
     else
         echo >> "$rc"
         echo "# $INSTALL_DIR" >> "$rc"
@@ -171,7 +183,7 @@ setup_fish() {
     fi
 
     if grep -q "function $ALIAS_NAME" "$rc" 2>/dev/null; then
-        : # already configured
+        :
     else
         cat >> "$rc" <<- EOF
 
@@ -180,7 +192,7 @@ function $ALIAS_NAME --wraps $BINARY_NAME
     $BINARY_NAME \$argv
 end
 EOF
-        echo "Added '$ALIAS_NAME' alias to $rc"
+        echo "         Added '$ALIAS_NAME' alias to config.fish"
     fi
 }
 
@@ -203,4 +215,5 @@ done
 shell_setup "${HOME}/.profile"
 
 echo
-echo "Done! Restart your shell or run: exec \$SHELL"
+echo "  Done! Restart your shell or run: exec \$SHELL"
+echo "  Then type: $ALIAS_NAME"
