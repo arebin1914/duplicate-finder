@@ -11,6 +11,42 @@ info() { echo "  [${1}/${2}] ${3}"; }
 
 TOTAL=6
 
+# ── Uninstall ──────────────────────────────────────────────────
+if [ "${1:-}" = "--uninstall" ]; then
+    echo "  Uninstalling $BINARY_NAME..."
+    for loc in "$INSTALL_DIR/$BINARY_NAME" "${HOME}/.cargo/bin/$BINARY_NAME"; do
+        if [ -x "$loc" ]; then
+            rm -f "$loc"
+            echo "    Removed: $loc"
+        fi
+    done
+    FOUND=$(command -v "$BINARY_NAME" 2>/dev/null || true)
+    if [ -n "$FOUND" ] && [ -x "$FOUND" ]; then
+        rm -f "$FOUND"
+        echo "    Removed: $FOUND"
+    fi
+
+    for rc in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.profile"; do
+        if [ -f "$rc" ]; then
+            sed -i "/# dupfind/d" "$rc" 2>/dev/null || true
+            sed -i "\|$INSTALL_DIR|d" "$rc" 2>/dev/null || true
+            sed -i "/alias $ALIAS_NAME=/d" "$rc" 2>/dev/null || true
+        fi
+    done
+    # fish
+    FISH_RC="${HOME}/.config/fish/config.fish"
+    if [ -f "$FISH_RC" ]; then
+        sed -i "/# $INSTALL_DIR/d" "$FISH_RC" 2>/dev/null || true
+        sed -i "\|$INSTALL_DIR|d" "$FISH_RC" 2>/dev/null || true
+        sed -i "/function $ALIAS_NAME/,/^end/d" "$FISH_RC" 2>/dev/null || true
+        sed -i "/# dupfind alias/d" "$FISH_RC" 2>/dev/null || true
+    fi
+
+    echo "  Uninstall complete."
+    echo "  Restart your shell or run: exec \$SHELL"
+    exit 0
+fi
+
 # Detect if running from within the repo
 if [ -f Cargo.toml ] && grep -q 'name = "dupfind"' Cargo.toml 2>/dev/null; then
     LOCAL=true
