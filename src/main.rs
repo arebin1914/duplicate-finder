@@ -221,7 +221,16 @@ fn main() {
             io::stdin().read_line(&mut input).ok();
             let answer = input.trim().to_lowercase();
             if answer.is_empty() || answer == "y" || answer == "yes" {
-                println!("Run: curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash");
+                println!("Updating to {}...", tag);
+                let status = std::process::Command::new("bash")
+                    .arg("-c")
+                    .arg("curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash")
+                    .status();
+                match status {
+                    Ok(s) if s.success() => println!("Update complete."),
+                    Ok(_) => eprintln!("Update failed."),
+                    Err(e) => eprintln!("Failed to run update: {}", e),
+                }
                 return;
             }
         }
