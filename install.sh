@@ -4,14 +4,39 @@ set -euo pipefail
 BINARY_NAME="dupfind"
 ALIAS_NAME="dfind"
 INSTALL_DIR="${HOME}/.local/bin"
+REPO="arebin1914/duplicate-finder"
+BRANCH="master"
+
+# Detect if running from within the repo (local install) or via curl
+if [ -f Cargo.toml ] && grep -q 'name = "dupfind"' Cargo.toml 2>/dev/null; then
+    LOCAL=true
+else
+    LOCAL=false
+fi
 
 if ! command -v cargo &>/dev/null; then
     echo "Error: Rust/Cargo is not installed."
-    echo "Install it first: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "Install it first:"
+    echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
     exit 1
 fi
 
-echo "Building $BINARY_NAME..."
+BUILD_DIR=$(mktemp -d)
+trap 'rm -rf "$BUILD_DIR"' EXIT
+
+if [ "$LOCAL" = true ]; then
+    echo "Building $BINARY_NAME from local source..."
+    cp -r . "$BUILD_DIR/"
+else
+    if ! command -v git &>/dev/null; then
+        echo "Error: git is required for curl-based installation."
+        exit 1
+    fi
+    echo "Downloading $BINARY_NAME from $REPO..."
+    git clone --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$BUILD_DIR"
+fi
+
+cd "$BUILD_DIR"
 cargo build --release
 
 mkdir -p "$INSTALL_DIR"
@@ -30,6 +55,16 @@ esac
 # Fish alias
 if command -v fish &>/dev/null; then
     FISH_CONFIG="${HOME}/.config/fish/config.fish"
+    mkdir -p "$(dirname "$FISH_CONFIG")"
+
+    # Ensure INSTALL_DIR is in fish PATH
+    if ! grep -q "fish_add_path.*$INSTALL_DIR" "$FISH_CONFIG" 2>/dev/null; then
+        echo >> "$FISH_CONFIG"
+        echo "# $INSTALL_DIR" >> "$FISH_CONFIG"
+        echo "fish_add_path -g \"$INSTALL_DIR\"" >> "$FISH_CONFIG"
+        echo "Added $INSTALL_DIR to fish PATH in $FISH_CONFIG"
+    fi
+
     if ! grep -q "function $ALIAS_NAME" "$FISH_CONFIG" 2>/dev/null; then
         cat >> "$FISH_CONFIG" <<- EOF
 
