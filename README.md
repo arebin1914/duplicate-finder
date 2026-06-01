@@ -4,9 +4,18 @@ Fast duplicate file finder written in Rust, using BLAKE3 hashing.
 
 ## Install
 
-**One-liner (requires Rust):**
+**One-liner:**
 ```sh
 curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash
+```
+
+The script auto-installs Rust and git if missing, with interactive prompts.
+
+**Update:** Re-run the same command to update to the latest version.
+
+**Uninstall:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/arebin1914/duplicate-finder/master/install.sh | bash -s -- --uninstall
 ```
 
 **Or manually:**
