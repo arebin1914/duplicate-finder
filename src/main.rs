@@ -213,6 +213,7 @@ fn main() {
     let mut delete_mode = false;
     let mut json_mode = false;
     let mut no_size = false;
+    let mut choose_format = false;
     let mut follow_links = false;
     let mut interactive = false;
 
@@ -279,6 +280,7 @@ fn main() {
             "--delete" => delete_mode = true,
             "--json" => json_mode = true,
             "--no-size" => no_size = true,
+            "-f" | "--choose-format" => choose_format = true,
             "--follow-symlinks" => follow_links = true,
             "-h" | "--help" => {
                 println!("Usage: dupfind [directory] [options]");
@@ -291,6 +293,7 @@ fn main() {
                 println!("  --delete              Interactively delete duplicates");
                 println!("  --json                Output as JSON");
                 println!("  --no-size             Hide file sizes");
+                println!("  -f, --choose-format   Interactively choose file format to display");
                 println!("  --follow-symlinks     Follow symbolic links");
                 println!("  --check-update       Check for newer version on GitHub");
                 println!("  --no-check-update    Skip automatic update check");
@@ -406,6 +409,68 @@ fn main() {
 
     let elapsed = start.elapsed();
 
+    // Determine which groups to show (all by default, or filtered by --choose-format)
+    let selected_groups: Vec<usize> = if choose_format && !duplicates.is_empty() {
+        let mut ext_options: Vec<String> = Vec::new();
+        let mut ext_indices: Vec<Vec<usize>> = Vec::new();
+        for (i, (_, paths)) in duplicates.iter().enumerate() {
+            // Find the most common extension in the group
+            let mut ext_counts: BTreeMap<String, usize> = BTreeMap::new();
+            for p in paths {
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    *ext_counts.entry(ext.to_lowercase()).or_default() += 1;
+                }
+            }
+            let ext = if ext_counts.len() == 1 {
+                ext_counts.keys().next().unwrap().clone()
+            } else if ext_counts.is_empty() {
+                String::new()
+            } else {
+                // Pick the most common extension
+                ext_counts.into_iter().max_by_key(|(_, c)| *c).map(|(e, _)| e).unwrap_or_default()
+            };
+            if let Some(pos) = ext_options.iter().position(|x| x == &ext) {
+                ext_indices[pos].push(i);
+            } else {
+                ext_options.push(ext);
+                ext_indices.push(vec![i]);
+            }
+        }
+
+        let mut options: Vec<&str> = ext_options.iter().map(|s| s.as_str()).collect();
+        options.sort_by_key(|s| s.to_string());
+        if options.is_empty() || (options.len() == 1 && options[0].is_empty()) {
+            (0..duplicates.len()).collect()
+        } else {
+            println!("\nExtensions in duplicate groups:");
+            let mut sorted: Vec<(usize, &str)> = options.iter().enumerate().map(|(i, s)| (i, *s)).collect();
+            sorted.sort_by(|a, b| a.1.cmp(b.1));
+            for (j, (orig_i, ext)) in sorted.iter().enumerate() {
+                let count = ext_indices[*orig_i].len();
+                println!("  [{:2}] {}  ({} group{})", j + 1, ext, count, if count == 1 { "" } else { "s" });
+            }
+            println!("  [ a]  All groups");
+            print!("Choose format [1-{}]: ", sorted.len());
+            io::stdout().flush().ok();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).ok();
+            let input = input.trim();
+            if input == "a" || input.is_empty() {
+                (0..duplicates.len()).collect()
+            } else if let Ok(n) = input.parse::<usize>() {
+                if n > 0 && n <= sorted.len() {
+                    ext_indices[sorted[n - 1].0].clone()
+                } else {
+                    (0..duplicates.len()).collect()
+                }
+            } else {
+                (0..duplicates.len()).collect()
+            }
+        }
+    } else {
+        (0..duplicates.len()).collect()
+    };
+
     if json_mode {
         let mut json_output = String::from("{\n");
         json_output.push_str("  \"duplicates\": {\n");
@@ -431,7 +496,8 @@ fn main() {
         println!("No duplicate files found.");
     } else {
         let mut wasted_bytes = 0u64;
-        for (i, ((size, hash), paths)) in duplicates.iter().enumerate() {
+        for (group_num, &idx) in selected_groups.iter().enumerate() {
+            let ((size, hash), paths) = &duplicates[idx];
             wasted_bytes += size * (paths.len() as u64 - 1);
             println!();
             println!("{}", "=".repeat(60));
@@ -442,7 +508,7 @@ fn main() {
             };
             println!(
                 "Group {} — {} copies{}  |  {}...",
-                i + 1,
+                group_num + 1,
                 paths.len(),
                 size_label,
                 &hash[..16]
@@ -457,8 +523,11 @@ fn main() {
         println!("{}", "=".repeat(60));
         println!(
             "Summary: {} duplicate group(s), {} in duplicates",
-            duplicates.len(),
-            format_size(duplicates.iter().map(|((s, _), p)| s * p.len() as u64).sum::<u64>())
+            selected_groups.len(),
+            format_size(selected_groups.iter().map(|&idx| {
+                let ((s, _), p) = &duplicates[idx];
+                s * p.len() as u64
+            }).sum::<u64>())
         );
         println!("Wasted space: {} (reclaimable)", format_size(wasted_bytes));
         println!("{}", "=".repeat(60));
@@ -472,9 +541,10 @@ fn main() {
         elapsed
     );
 
-    // Interactive delete mode
+    // Interactive delete mode (only on selected groups)
     if delete_mode && !duplicates.is_empty() {
-        for ((size, hash), paths) in &duplicates {
+        for &idx in &selected_groups {
+            let ((size, hash), paths) = &duplicates[idx];
             println!("\nGroup (size={}, hash={}):", size, hash);
             for (i, p) in paths.iter().enumerate() {
                 println!("  [{}] {}", i, p.display());
