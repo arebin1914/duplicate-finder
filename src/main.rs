@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const CHUNK_SIZE: usize = 8192;
+use rayon::prelude::*;
+
+const CHUNK_SIZE: usize = 256 * 1024;
 
 fn format_size(size: u64) -> String {
     const UNITS: &[&str] = &["B", "K", "M", "G", "T"];
@@ -22,11 +24,12 @@ fn format_size(size: u64) -> String {
 }
 
 fn file_hash(path: &Path) -> io::Result<String> {
-    let mut f = fs::File::open(path)?;
+    let f = fs::File::open(path)?;
+    let mut reader = BufReader::with_capacity(CHUNK_SIZE, f);
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; CHUNK_SIZE];
     loop {
-        let n = f.read(&mut buf)?;
+        let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
@@ -293,19 +296,24 @@ fn main() {
 
     let mut hash_map: BTreeMap<(u64, String), Vec<PathBuf>> = BTreeMap::new();
 
-    for (size, paths) in &size_map {
-        if paths.len() < 2 {
-            continue;
-        }
-        for path in paths {
-            match file_hash(path) {
-                Ok(h) => {
-                    hash_map.entry((*size, h)).or_default().push(path.clone());
-                    hashed.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(_) => {}
-            }
-        }
+    let candidates: Vec<(u64, PathBuf)> = size_map
+        .iter()
+        .filter(|(_, paths)| paths.len() >= 2)
+        .flat_map(|(size, paths)| paths.iter().map(move |p| (*size, p.clone())))
+        .collect();
+
+    let results: Vec<((u64, String), PathBuf)> = candidates
+        .par_iter()
+        .filter_map(|(size, path)| {
+            file_hash(path).ok().map(|h| {
+                hashed.fetch_add(1, Ordering::Relaxed);
+                ((*size, h), path.clone())
+            })
+        })
+        .collect();
+
+    for ((size, hash), path) in results {
+        hash_map.entry((size, hash)).or_default().push(path);
     }
 
     running2.store(false, Ordering::Relaxed);
